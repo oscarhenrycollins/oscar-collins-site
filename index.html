@@ -93,6 +93,7 @@ const state = {
   hostingChoice: null, // 'local' or 'cloud'
   hostinger: { apiKey: '', plan: 'kvm1', location: 'us-east', hostname: '' },
   keys: { claude: '', google: '', brave: '' },
+  tailscale: { authkey: '' },
   serverInfo: null, // { url, token, ip }
 };
 
@@ -253,6 +254,33 @@ const steps = [
     `
   },
 
+
+  // Step 2.5: Tailscale authkey (cloud only)
+  {
+    if: () => state.hostingChoice === 'cloud',
+    title: 'Get your secure connection key',
+    render: () => `
+      <p>To access your AI from anywhere securely, we use Tailscale (it's like a private tunnel).</p>
+      
+      <p style="margin-top:16px"><strong>What's this for?</strong> This lets you connect to your AI from your phone, laptop, or tablet - without exposing it to the internet.</p>
+
+      <p style="margin-top:16px"><strong>How to get it:</strong></p>
+      <ol style="margin-left:20px;margin-top:8px">
+        <li style="margin-bottom:8px">Go to <a href="https://login.tailscale.com/admin/settings/keys" target="_blank">Tailscale settings</a> (create free account if needed)</li>
+        <li style="margin-bottom:8px">Click <strong>Generate auth key</strong></li>
+        <li style="margin-bottom:8px">Check <strong>Reusable</strong> and <strong>Ephemeral</strong></li>
+        <li>Copy the key (starts with "tskey-")</li>
+      </ol>
+
+      <div class="input-group" style="margin-top:20px">
+        <label>Tailscale Auth Key</label>
+        <input type="password" id="tailscaleKeyInput" placeholder="tskey-auth-...">
+        <div class="help">🔒 This stays private - lets your devices connect securely</div>
+      </div>
+
+      <button onclick="saveTailscaleKey()" style="margin-top:24px">Continue →</button>
+    `
+  },
   // Step 3: Local install OR cloud done
   {
     if: () => state.hostingChoice === 'local',
@@ -293,9 +321,21 @@ const steps = [
       <p>Your AI is running! Here's how to talk to it:</p>
 
       <div class="note green" style="margin-top:16px">
-        <strong>Your connection info:</strong><br>
-        URL: <code>${state.serverInfo?.url || 'https://your-machine.tail123.ts.net'}</code><br>
-        Token: <code>${state.serverInfo?.token || 'Run: cat ~/.openclaw/openclaw.json | grep token'}</code>
+        <strong>Your server is ready!</strong><br>
+        ${state.serverInfo ? `
+          <p style="margin-top:8px"><strong>1. Get your connection URL:</strong></p>
+          <p style="margin-left:16px">• Install <a href="https://tailscale.com/download" target="_blank">Tailscale</a> on your device<br>
+          • Open Tailscale → look for machine named "<code>${state.serverInfo.tailscaleHostname}</code>"<br>
+          • The URL will be: <code>https://${state.serverInfo.tailscaleHostname}.tail<em>XXXX</em>.ts.net</code></p>
+          
+          <p style="margin-top:12px"><strong>2. Get your auth token:</strong></p>
+          <p style="margin-left:16px">SSH into your server:<br>
+          <code style="background:#fff;padding:2px 6px;border-radius:4px">${state.serverInfo.sshCommand}</code><br>
+          Then run: <code style="background:#fff;padding:2px 6px;border-radius:4px">cat ~/.openclaw/openclaw.json | grep '"token"'</code></p>
+        ` : `
+          <p><strong>Tailscale URL:</strong> Install Tailscale, find your machine<br>
+          <strong>Token:</strong> Run <code>cat ~/.openclaw/openclaw.json | grep token</code> on your server</p>
+        `}
       </div>
 
       <div style="margin-top:24px;padding:20px;background:#f9f9f9;border-radius:12px">
@@ -392,6 +432,14 @@ function saveKeys() {
   nextStep();
 }
 
+function saveTailscaleKey() {
+  const key = document.getElementById('tailscaleKeyInput').value.trim();
+  if (!key) return alert('Please add your Tailscale auth key');
+  if (!key.startsWith('tskey-')) return alert('Tailscale keys start with "tskey-". Please check and try again.');
+  state.tailscale.authkey = key;
+  nextStep();
+}
+
 async function createServer() {
   nextStep(); // Go to loading screen
   
@@ -406,6 +454,7 @@ async function createServer() {
 set -e
 curl -fsSL https://openclaw.ai/install.sh | bash
 curl -fsSL https://tailscale.com/install.sh | sh
+tailscale up --authkey=${state.tailscale.authkey} --hostname=${state.hostinger.hostname}
 echo '${configB64}' | base64 -d > ~/.openclaw/openclaw.json
 openclaw config set gateway.bind loopback
 openclaw config set gateway.tailscale.mode serve
@@ -458,10 +507,13 @@ openclaw gateway start
       const statusData = await statusResponse.json();
       
       if (statusData.status === 'active') {
+        const ip = statusData.ipv4_address || 'check dashboard';
         state.serverInfo = {
-          url: `https://${state.hostinger.hostname}.tail[SUFFIX].ts.net`,
-          token: 'Run: cat ~/.openclaw/openclaw.json | grep token',
-          ip: statusData.ipv4_address || 'check dashboard'
+          url: `Visit Tailscale app/dashboard to see your machine's URL`,
+          tailscaleHostname: state.hostinger.hostname,
+          token: `SSH into server and run: cat ~/.openclaw/openclaw.json | grep '"token"'`,
+          ip,
+          sshCommand: `ssh root@${ip}`
         };
         status.innerHTML = '<p class="note green">✓ Done!</p>';
         await sleep(1000);
